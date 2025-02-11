@@ -1,10 +1,13 @@
-from sqlalchemy import create_engine
+from sqlalchemy import create_engine, Column, Integer, String
 #from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import sessionmaker, declarative_base
 import os
 from dotenv import load_dotenv
 
+
 load_dotenv()
+
+
 #URL de BBDD
 DATABASE_PASSWORD = os.getenv("DB_PASSWORD")
 DATABASE_URL = f"mysql+pymysql://root:{DATABASE_PASSWORD}@localhost:3306/CONQUERBLOCKS"
@@ -17,3 +20,14 @@ Base = declarative_base()
 
 #configuración de la sesión
 #SessionLocal = sessionmaker(autoflush=False, bind = engine)
+Session = sessionmaker(bind = engine)
+#abrir sesion
+session = Session()
+
+#Definición de un modelo
+class User(Base):
+    __tablename__ = "Users"
+    id = Column(Integer, primary_key = True)
+    name = Column(String, nullable = False)
+    age = Column(Integer, nullable = False)
+
