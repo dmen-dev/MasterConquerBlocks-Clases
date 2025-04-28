@@ -1,19 +1,14 @@
 import pandas as pd
 import numpy as np
+import json
 
 class Capa_densa:
     #incio de la capa
-    def __init__(self, n_inputs, n_neuronas, weight_regularizer_l1 = 0, weight_regularizer_l2 = 0, bias_regularizer_l1 = 0, bias_regularizer_l2 = 0):
+    def __init__(self, n_inputs, n_neuronas):
         #inicio los pesos de la capa con aleatorio
-        self.weights = 0.01 * np.random.rand(n_inputs, n_neuronas)
+        self.weights = 0.01 * np.random.randn(n_inputs, n_neuronas)
         #inicio de los sesgos de la capa
         self.biases = np.zeros((1, n_neuronas))
-        
-        self.weights_regularizer_l1 = weight_regularizer_l1
-        self.weights_regularizer_l2 = weight_regularizer_l2
-        self.bias_regularizer_l1 = bias_regularizer_l1
-        self.bias_regularizer_l2 = bias_regularizer_l2
-
         pass
 
     def forward(self, inputs):
@@ -31,30 +26,10 @@ class Capa_densa:
             self.dweights = np.dot(self.inputs.T, dvalues) #se traspone para que se pueda multiplicar
             self.dbiases = np.sum(dvalues, axis = 0, keepdims= True) 
 
-            #Regularización de los pesos de L1
-            if self.weight_regularizer_l1 > 0:
-                dL1 = np.ones_like(self.weights)
-                dL1[self.weights < 0] = -1
-
-                self.dweights += self.weights_regularizer_l1 * dL1
-            
-            #Regularización de los pesos de L2
-            if self.weights_regularizer_l2 > 0:
-                self.dweights += 2 * self.weights_regularizer_l2 * self.weights
-
-            #L1 en los sesgos
-            if self.bias_regularizer_l1 > 0:
-                dL1 = np.ones_like(self.biases)
-                dL1[self.biases < 0] = -1
-
-                self.dbiases += self.bias_regularizer_l1 * dL1
-
-            #L2 en los sesgos
-            if self.bias_regularizer_l2 > 0:
-                self.dbiases += 2 * self.bias_regularizer_l2 * self.biases
-
             #Gradiente de los valores
             self.dinputs = np.dot(dvalues, self.weights.T)
+
+            pass
 
 class Activation_ReLu:
 
@@ -110,25 +85,6 @@ class Loss:
         # CALCULAR LA PÉRDIDA MEDIA
         data_loss = np.mean(sample_losses)
         return data_loss
-    
-    def  regularization_loss(self, layer):
-        #se le aplicará a cada una de las capas
-        regularization_loss = 0
-        #Regularización de los pesos de L1
-        
-        if layer.weights_regularizer_l1 > 0:
-            regularization_loss += layer.weights_regularizer_l1 * np.sum(np.abs(layer.weights))
-
-        #Regularización de los pesos de L2
-
-        if layer.weights_regularizer_l2 > 0:
-            regularization_loss += layer.weights_regularizer_l2 * np.sum(layer.weights * layer.weights)
-
-        if layer.bias_regularizer_l1 > 0:
-            regularization_loss += layer.bias_regularizer_l1 * np.sum(np.abs(layer.biases))
-
-        if layer.bias_regularizer_l2 > 0:
-            regularization_loss += layer.bias_regularizer_l2 * np.sum(layer.biases * layer.biases)
 
 class Loss_CategoricalCrossEntropy(Loss):
     def forward(self, y_pred, y_true):
@@ -228,13 +184,135 @@ class Optimizer_SDG:
     def post_update_params(self):
         self.iterations += 1
 
+class Optimizer_Adagrad:
 
+    def __init__ (self, learning_rate =1., decay=0., epsilon=1e-7): #cuando los números son muy pequeños, se puede dar el caso de que no se pueda dividir entre 0
+        self.learning_rate = learning_rate
+        self.current_learning_rate = learning_rate
+        self.decay = decay
+        self.iteration = 0
+        self.epsilon = epsilon
+        pass
 
+    def pre_update_params(self):
+        
+        if self.decay:
+            self.current_learning_rate = self.learning_rate * (1. / (1+self.decay * self.iteration))
 
+    def update_params(self, layer):
+
+        #si no existe el cache lo creamos
+        if not hasattr(layer, 'weight_cache'):
+            layer.weight_cache = np.zeros_like(layer.weights)
+            layer.bias_cache = np.zeros_like(layer.biases)
+
+        #calculamos el acumulado del cache
+        layer.weight_cache += layer.dweights ** 2 #conseguimos acumular el cuadrado de los gradientes para cada uno de los pesos
+        layer.bias_cache += layer.dbiases ** 2
+
+        #actualiza la tasa de aprendizaje en base a la raíz cuadrada de los históricos de los pesos y sesgos
+        layer.weights += -self.current_learning_rate * layer.dweights / (np.sqrt(layer.weight_cache) + self.epsilon)
+        layer.biases += -self.current_learning_rate * layer.dbiases / (np.sqrt(layer.bias_cache) + self.epsilon)    
+
+    def post_update_params(self):
+
+        self.iteration += 1
+
+class Optimizer_RMSProp:
+
+    def __init__(self, learning_rate = 0.001, decay = 0., epsilon = 1e-7, rho = 0.9):
+        self.learning_rate = learning_rate
+        self.current_learning_rate = learning_rate
+        self.decay = decay
+        self.iteration = 0
+        self.epsilon = epsilon
+        self.rho = rho
+
+        pass
+
+    def pre_update_params(self):
+
+        if self.decay:
+            self.current_learning_rate = self.learning_rate * (1. / (1 + self.decay * self.iteration))
+
+    def update_params(self, layer):
+        
+        # Si no existe el cache lo creamos
+        if not hasattr(layer, 'weight_cache'):
+            layer.weight_cache = np.zeros_like(layer.weights)
+            layer.bias_cache = np.zeros_like(layer.biases)
+
+        #Actualizo los caches en función de la media móvil exponencial
+        layer.weight_cache = self.rho * layer.weight_cache + (1 - self.rho) * layer.dweights ** 2
+        layer.bias_cache = self.rho * layer.bias_cache + (1 - self.rho) * layer.dbiases ** 2
+
+        # Actualizo los pesos y sesgos
+        layer.weights += -self.current_learning_rate * layer.dweights / (np.sqrt(layer.weight_cache) + self.epsilon)
+        layer.biases += -self.current_learning_rate * layer.dbiases / (np.sqrt(layer.bias_cache) + self.epsilon)
+
+    def post_update_params(self):
+            
+        self.iteration += 1
+
+class Optimizer_Adam:
+
+    def __init__ (self, learning_rate = 0.001, decay = 0., epsilon = 1e-7, beta_1 = 0.9, beta_2 = 0.999): #beta1 significa que decaymiento (Descenso) es lento, si fuera un valor pequeño hace que pierda la inercia que llevaba
+    #beta_2 controla el descenso más lento si es un valor pequeño, si es un valor grande hace que el descenso sea más rápido. Hace que sea dificil caer en mínimos locales            
+
+        self.learning_rate = learning_rate
+        self.current_learning_rate = learning_rate
+        self.decay = decay
+        self.iteration = 0
+        self.epsilon = epsilon
+        self.beta_1 = beta_1
+        self.beta_2 = beta_2        
+
+    def pre_update_params (self):
+
+        if self.decay:
+            self.current_learning_rate = self.learning_rate * (1. / (1.+self.decay * self.iteration))
+
+    def update_params (self, layer):
+
+        if not hasattr(layer, 'weight_cache'):
+            layer.weight_momentums = np.zeros_like(layer.weights)
+            layer.weight_cache = np.zeros_like(layer.weights)
+            layer.bias_momentums = np.zeros_like(layer.biases)
+            layer.bias_cache = np.zeros_like(layer.biases)
+
+        #Actualizo los caches de los gradientes actuales
+        layer.weight_momentums = self.beta_1 * layer.weight_momentums + (1 - self.beta_1) * layer.dweights
+        layer.bias_momentums = self.beta_1 * layer.bias_momentums + (1 - self.beta_1) * layer.dbiases
+
+        #Obtengo el momento corregido
+        weight_momentums_corrected = layer.weight_momentums / (1 - self.beta_1 **(self.iteration + 1))
+        bias_momentums_corrected = layer.bias_momentums / (1 - self.beta_1 ** (self.iteration + 1))
+
+        #Actualizo el cache corregido
+        layer.weight_cache = self.beta_2 * layer.weight_cache + (1- self.beta_2) * layer.dweights**2
+        layer.bias_cache = self.beta_2 * layer.bias_cache + (1 - self.beta_2) * layer.dbiases**2
+
+        #Obtengo el cache corregido
+        weight_cache_corrected = layer.weight_cache / (1 - self.beta_2 ** (self.iteration +1))
+        bias_cache_corrected = layer.bias_cache / (1 - self.beta_2 ** (self.iteration + 1))
+
+        #Actualizo los pesos y sesgos
+        layer.weights += -self.learning_rate * weight_momentums_corrected / (np.sqrt(weight_cache_corrected)+self.epsilon)
+        layer.biases += -self.learning_rate * bias_momentums_corrected / (np.sqrt(bias_cache_corrected)+self.epsilon)
+
+    def post_update_params (self):
+
+        self.iteration += 1
+
+#Leyenda de columnas
+#Pclass Ticket Class: 1 = 1st, 2 = 2nd, 3 = 3rd
+#SibSp No. of siblings / spouses aboard the Titanic
+#Parch No. of parents / children aboard the Titanic
+#Passenger fase -- Lo que pago el pasajero
 
 #cargar el archivo CSV
-#file_path = '/Clase_3/Titanic-Dataset.csv'
-titanic_data = pd.read_csv("Titanic-Dataset.csv")
+titanic_data = pd.read_csv("D:\VSCode\MasterConquerBlocks\RedesNeuronales\Tema5\Clase_13\Titanic-Dataset.csv")
+#titanic_data = pd.read_csv("Titanic-Dataset.csv")
 
 
 #Eliminar las columnas PassengerID, Name, Ticket, Cabin, Embarked
@@ -252,7 +330,7 @@ titanic_data_cleaned = titanic_data_cleaned.dropna()
 #Extraigo resultado
 Resultado = titanic_data_cleaned['Survived']
 #print(len(Resultado))
-Y = np.array(Resultado)
+Y = np.array(titanic_data_cleaned['Survived'])
 
 
 #Elimino la columna del dataset para
@@ -260,10 +338,6 @@ titanic_data_cleaned = titanic_data_cleaned.drop(columns = ['Survived'])
 
 #Construyo un array de numpy con los datos limpios
 X = np.array(titanic_data_cleaned)
-#print(X)
-
-#quitar los valores no completaos, aquellos  como nan
-
 
 #los inputs son 6 neuronas, porque son 6 las columnas que tenemos en el dataset y 10 neuronas de salida (las de salida nos inventamos)
 #Creamos primera capa oculta
@@ -275,13 +349,12 @@ Activacion_1 = Activation_ReLu()
 #Creamos segunda capa oculta
 #Se ponen 2 output ya que necesitamos saber si vive o muere
 Capa_2 = Capa_densa(10, 2)
-Activacion_2 = Activation_softmax()
+#Activacion_2 = Activation_softmax()
 loss_activation = Activation_Softmax_Loss_CategoricalCrossentropy()
 
-#optimizer = Optimizer_SDG(learning_rate=0.01, decay=1e-3, momentum=0.2)
-optimizer = Optimizer_SDG(learning_rate=0.05, decay=1e-1, momentum=0.2)
+optimizer = Optimizer_Adam(decay = 1e-4)
 
-for epoch in range(500):
+for epoch in range(501):
     #Iniciamos la red con valores del dataframe. Como entrada todos los datos del titanic habiendo eliminado la columna de supervivientes
     Capa_1.forward(X)
 
@@ -292,7 +365,7 @@ for epoch in range(500):
     Capa_2.forward(Activacion_1.output)
 
     #Paso por la función de activacion softmax
-    Activacion_2.forward(Capa_2.output)
+    #Activacion_2.forward(Capa_2.output)
 
     #print(Activacion_2.output[:5])
     #print(Y[:5])
@@ -301,11 +374,8 @@ for epoch in range(500):
     #CALCULAR LA PÉRDIDA DE MUESTRA
     #loss_function = Loss_CategoricalCrossEntropy()
     #loss = loss_function.calculate(Activacion_2.output, Y)
-    data_loss = loss_activation.forward(Activacion_2.output, Y)
+    loss = loss_activation.forward(Capa_2.output, Y)
 
-    regulation_loss = loss_activation.loss.regularization_loss(Capa_1) + loss_activation.loss.regularization_loss(Capa_2)
-
-    loss = data_loss + regulation_loss
 
     #PRINT LOSS VALUE
     #print('Loss:', loss)
@@ -318,6 +388,12 @@ for epoch in range(500):
     precision = np.mean(predicciones == Y)
     #print('Precisión: ', precision)
 
+    #Print la precisión
+    if not epoch % 10:
+        print(f'epoch: {epoch}, ' +
+              f'acc: {precision:.3f}, ' +
+              f'loss: {loss:.3f}, ' + 
+              f'lr: {optimizer.current_learning_rate:.5f}')
 
     #Backwards para calcular los gradientes de toda la red
     loss_activation.backwards(loss_activation.output, Y)
@@ -331,9 +407,20 @@ for epoch in range(500):
     optimizer.update_params(Capa_2)
     optimizer.post_update_params()
 
-    #Print loss value
-    if not epoch % 10:
-        print(f'epoch: {epoch}, ' +
-              f'acc: {precision:.3f}, ' +
-              f'loss: {loss:.3f}', +
-              f'regularization_loss: {regulation_loss:.3f}, ')
+print('Modelo entrenado')
+
+Export_data = {
+
+    'Capa1' :{
+        'Weights': Capa_1.weights.tolist(),
+        'Biases': Capa_1.biases.tolist()
+        },
+    'Capa2' :{
+        'Weights': Capa_2.weights.tolist(),
+        'Biases': Capa_2.biases.tolist()
+        },       
+    }
+
+json_file_path = 'model_parameters.json'
+with open(json_file_path, 'w') as json_file:
+    json.dump(Export_data, json_file,)
